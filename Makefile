@@ -1,6 +1,6 @@
 
-bin/viamgpsd: go.mod *.go cmd/module/*.go
-	go build -o bin/viamgpsd cmd/module/cmd.go
+bin/viambuildhat: go.mod *.go cmd/module/*.go
+	go build -o bin/viambuildhat cmd/module/cmd.go
 
 lint:
 	gofmt -s -w .
@@ -12,8 +12,8 @@ updaterdk:
 test:
 	go test
 
-module: bin/viamgpsd
-	tar czf module.tar.gz bin/viamgpsd
+module: bin/viambuildhat
+	tar czf module.tar.gz bin/viambuildhat
 
 all: test module 
 

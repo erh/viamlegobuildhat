@@ -1,6 +1,8 @@
 package main
 
 import (
+	"go.viam.com/rdk/logging"
+
 	"github.com/erh/viambuildhat"
 )
 
@@ -12,14 +14,13 @@ func main() {
 }
 
 func realMain() error {
+	logger := logging.NewDebugLogger("motortype")
 
-	conn, err := viambuildhat.NewConnection("/dev/serial0")
+	conn, err := viambuildhat.NewConnection("/dev/serial0", logger)
 	if err != nil {
 		return err
 	}
-
 	defer conn.Close()
 
 	return nil
-
 }

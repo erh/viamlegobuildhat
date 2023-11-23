@@ -13,5 +13,4 @@ func TestChecksum(t *testing.T) {
 	test.That(t, len(firmware), test.ShouldEqual, 54168)
 	test.That(t, checksum(firmware), test.ShouldEqual, 2080457803)
 
-	
 }
