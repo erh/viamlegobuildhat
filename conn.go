@@ -49,23 +49,9 @@ func NewConnection(path string, logger logging.Logger) (*Connection, error) {
 	go conn.readLoop()
 	conn.smallSleep()
 
-	err = conn.init()
+	err = conn.init(false)
 	if err != nil {
 		return nil, multierr.Combine(conn.Close(), err)
-	}
-
-	if true {
-		err = conn.write([]byte("port 3; plimit 0.7; select 0; pwm; set .8\r"))
-		if err != nil {
-			panic(err)
-		}
-
-		time.Sleep(time.Second * 2)
-
-		err = conn.write([]byte("port 3; select 0; pwm; set 0\r"))
-		if err != nil {
-			panic(err)
-		}
 	}
 
 	return conn, nil
@@ -80,9 +66,10 @@ type Connection struct {
 
 	metaDataLock  sync.Mutex
 	versionString string
+	lastLines     []string
 }
 
-func (c *Connection) init() error {
+func (c *Connection) init(secondTime bool) error {
 	err := c.write([]byte("version\r"))
 	if err != nil {
 		return err
@@ -101,10 +88,14 @@ func (c *Connection) init() error {
 
 	if strings.Contains(v, "bootloader") {
 		c.logger.Infof("loading firmware because bootloader: %s", v)
+		if secondTime {
+			return fmt.Errorf("still got bootloader on second time")
+		}
 		err = c.loadFirmware()
 		if err != nil {
 			return err
 		}
+		return c.init(true)
 	}
 
 	err = c.write([]byte("echo 0\r"))
@@ -146,9 +137,33 @@ func (c *Connection) readLoop() {
 			c.metaDataLock.Unlock()
 			c.logger.Infof("firmware version at startup: %s", line)
 		} else {
-			c.logger.Warnf("got unknown line [%s]", line)
+			c.logger.Infof("got unknown line [%s]", line)
+
+			c.metaDataLock.Lock()
+			c.lastLines = append(c.lastLines, line)
+			if len(c.lastLines) > 20 {
+				c.lastLines = c.lastLines[len(c.lastLines)-19:]
+			}
+			c.metaDataLock.Unlock()
 		}
 	}
+}
+
+func (c *Connection) waitForLine(line string) error {
+	for i := 0; i < 100; i++ {
+
+		c.metaDataLock.Lock()
+		for _, l := range c.lastLines {
+			if strings.Contains(l, line) {
+				c.metaDataLock.Unlock()
+				return nil
+			}
+		}
+
+		c.metaDataLock.Unlock()
+		time.Sleep(time.Millisecond * 100)
+	}
+	return fmt.Errorf("did not get line [%s]", line)
 }
 
 func (c *Connection) loadFirmware() error {
@@ -187,8 +202,17 @@ func (c *Connection) loadFirmware() error {
 
 	c.smallSleep() // TODO: self.getprompt()
 
-	c.write([]byte("reboot\r"))
-	time.Sleep(time.Second)
+	err = c.write([]byte("reboot\r"))
+	if err != nil {
+		return err
+	}
+
+	err = c.waitForLine("Done initialising ports")
+	if err != nil {
+		return err
+	}
+
+	time.Sleep(10 * time.Second) // TODO - this works but is ugly, cribbed from python system
 
 	return nil
 }
@@ -216,6 +240,8 @@ func (c *Connection) smallSleep() {
 }
 
 func (c *Connection) write(b []byte) error {
+	c.devLock.Lock()
+	defer c.devLock.Unlock()
 	_, err := c.dev.Write(b)
 	return err
 }
