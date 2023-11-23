@@ -4,13 +4,90 @@ import (
 	"context"
 	"fmt"
 
+	"go.viam.com/rdk/components/generic"
 	"go.viam.com/rdk/components/motor"
 	"go.viam.com/rdk/logging"
 	"go.viam.com/rdk/resource"
+	"go.viam.com/utils"
 )
 
-func NewMotor(c *Connection, port int, logger logging.Logger) (motor.Motor, error) {
+var MotorModel = family.WithModel("motor")
+
+func init() {
+	resource.RegisterComponent(
+		motor.API,
+		MotorModel,
+		resource.Registration[motor.Motor, *MotorConfig]{
+			Constructor: newMotor,
+		})
+}
+
+type MotorConfig struct {
+	Connection string
+	Port       string
+}
+
+func (c *MotorConfig) Validate(path string) ([]string, error) {
+	if c.Connection == "" {
+		return nil, utils.NewConfigValidationFieldRequiredError(path, "connection")
+	}
+
+	_, err := c.portNumber(path)
+	if err != nil {
+		return nil, err
+	}
+
+	return []string{c.Connection}, nil
+}
+
+func (c *MotorConfig) portNumber(path string) (int, error) {
+	if len(c.Port) != 1 {
+		return 0, utils.NewConfigValidationError(path, fmt.Errorf("port has to be exactly 1 character long"))
+	}
+	x := c.Port[0]
+
+	if x >= 'A' && x <= 'D' {
+		return int(x - 'A'), nil
+	}
+
+	if x >= 'a' && x <= 'd' {
+		return int(x - 'a'), nil
+	}
+
+	if x >= '0' && x <= '3' {
+		return int(x - '0'), nil
+	}
+
+	return 0, utils.NewConfigValidationError(path, fmt.Errorf("invalid port [%s]", c.Port))
+}
+
+func newMotor(ctx context.Context, deps resource.Dependencies, conf resource.Config, logger logging.Logger) (motor.Motor, error) {
+	newConf, err := resource.NativeConfig[*MotorConfig](conf)
+	if err != nil {
+		return nil, err
+	}
+
+	r, err := deps.Lookup(generic.Named(newConf.Connection))
+	if err != nil {
+		return nil, err
+	}
+
+	c, ok := r.(*Connection)
+	if !ok {
+		return nil, fmt.Errorf("connection isn't a connection, is a %T", r)
+	}
+
+	port, err := newConf.portNumber("")
+	if err != nil {
+		return nil, err
+	}
+
+	return NewMotor(conf.ResourceName(), c, port, logger)
+}
+
+func NewMotor(name resource.Name, c *Connection, port int, logger logging.Logger) (motor.Motor, error) {
 	m := &legoMotor{
+		name:   name,
 		c:      c,
 		logger: logger,
 		port:   port,
@@ -22,6 +99,7 @@ func NewMotor(c *Connection, port int, logger logging.Logger) (motor.Motor, erro
 type legoMotor struct {
 	resource.AlwaysRebuild
 
+	name   resource.Name
 	c      *Connection
 	logger logging.Logger
 	port   int
@@ -71,7 +149,7 @@ func (m *legoMotor) Close(ctx context.Context) error {
 }
 
 func (m *legoMotor) Name() resource.Name {
-	panic(7)
+	return m.name
 }
 
 func (m *legoMotor) DoCommand(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {

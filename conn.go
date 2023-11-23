@@ -2,6 +2,7 @@ package viambuildhat
 
 import (
 	"bufio"
+	"context"
 	_ "embed"
 	"fmt"
 	"io"
@@ -13,8 +14,21 @@ import (
 	"github.com/jacobsa/go-serial/serial"
 	"go.uber.org/multierr"
 
+	"go.viam.com/rdk/components/generic"
 	"go.viam.com/rdk/logging"
+	"go.viam.com/rdk/resource"
 )
+
+var ConnectionModel = family.WithModel("connection")
+
+func init() {
+	resource.RegisterComponent(
+		generic.API,
+		ConnectionModel,
+		resource.Registration[resource.Resource, resource.NoNativeConfig]{
+			Constructor: newConnection,
+		})
+}
 
 //go:embed data/firmware.bin
 var firmware []byte
@@ -22,8 +36,16 @@ var firmware []byte
 //go:embed data/signature.bin
 var signature []byte
 
+func newConnection(ctx context.Context, deps resource.Dependencies, config resource.Config, logger logging.Logger) (resource.Resource, error) {
+	path := "/dev/serial"
+	if config.Attributes.Has("path") {
+		path = config.Attributes.String("path")
+	}
+	return NewConnection(ctx, config.ResourceName(), path, logger)
+}
+
 // path is usually /dev/serial0
-func NewConnection(path string, logger logging.Logger) (*Connection, error) {
+func NewConnection(ctx context.Context, name resource.Name, path string, logger logging.Logger) (*Connection, error) {
 
 	options := serial.OpenOptions{
 		PortName:          path,
@@ -40,6 +62,7 @@ func NewConnection(path string, logger logging.Logger) (*Connection, error) {
 	}
 
 	conn := &Connection{
+		name:   name,
 		logger: logger,
 		dev:    dev,
 	}
@@ -51,13 +74,16 @@ func NewConnection(path string, logger logging.Logger) (*Connection, error) {
 
 	err = conn.init(false)
 	if err != nil {
-		return nil, multierr.Combine(conn.Close(), err)
+		return nil, multierr.Combine(conn.Close(ctx), err)
 	}
 
 	return conn, nil
 }
 
 type Connection struct {
+	resource.AlwaysRebuild
+
+	name   resource.Name
 	logger logging.Logger
 	closed atomic.Bool
 
@@ -217,7 +243,7 @@ func (c *Connection) loadFirmware() error {
 	return nil
 }
 
-func (c *Connection) Close() error {
+func (c *Connection) Close(context.Context) error {
 	c.closed.Store(true)
 
 	// TODO:
@@ -266,6 +292,14 @@ func (c *Connection) writeBinaryFile(data []byte) error {
 	}
 
 	return nil
+}
+
+func (c *Connection) Name() resource.Name {
+	return c.name
+}
+
+func (c *Connection) DoCommand(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
+	return nil, fmt.Errorf("viambuildhat connection can't handle command %v", cmd)
 }
 
 func checksum(data []byte) uint64 {
