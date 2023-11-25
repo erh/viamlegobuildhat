@@ -3,6 +3,7 @@ package viambuildhat
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 
 	"go.viam.com/rdk/components/generic"
 	"go.viam.com/rdk/components/motor"
@@ -23,21 +24,17 @@ func init() {
 }
 
 type MotorConfig struct {
-	Connection string
-	Port       string
+	Path string
+	Port string
 }
 
 func (c *MotorConfig) Validate(path string) ([]string, error) {
-	if c.Connection == "" {
-		return nil, utils.NewConfigValidationFieldRequiredError(path, "connection")
-	}
-
 	_, err := c.portNumber(path)
 	if err != nil {
 		return nil, err
 	}
 
-	return []string{c.Connection}, nil
+	return []string{}, nil
 }
 
 func (c *MotorConfig) portNumber(path string) (int, error) {
@@ -67,14 +64,9 @@ func newMotor(ctx context.Context, deps resource.Dependencies, conf resource.Con
 		return nil, err
 	}
 
-	r, err := deps.Lookup(generic.Named(newConf.Connection))
+	c, err := GetConnection(ctx, generic.Named("hat"), newConf.Path, logger)
 	if err != nil {
 		return nil, err
-	}
-
-	c, ok := r.(*Connection)
-	if !ok {
-		return nil, fmt.Errorf("connection isn't a connection, is a %T", r)
 	}
 
 	port, err := newConf.portNumber("")
@@ -103,11 +95,13 @@ type legoMotor struct {
 	c      *Connection
 	logger logging.Logger
 	port   int
+
+	currentPWM int32
 }
 
 func (m *legoMotor) SetPower(ctx context.Context, powerPct float64, extra map[string]interface{}) error {
 	cmd := fmt.Sprintf("port %d; plimit 1; select 0; pwm; set %0.3f\r", m.port, powerPct)
-	m.logger.Infof(cmd)
+	atomic.StoreInt32(&m.currentPWM, int32(powerPct*1000))
 	return m.c.write([]byte(cmd))
 }
 
@@ -128,11 +122,12 @@ func (m *legoMotor) Position(ctx context.Context, extra map[string]interface{}) 
 }
 
 func (m *legoMotor) Properties(ctx context.Context, extra map[string]interface{}) (motor.Properties, error) {
-	panic(2)
+	return motor.Properties{false}, nil
 }
 
 func (m *legoMotor) IsPowered(ctx context.Context, extra map[string]interface{}) (bool, float64, error) {
-	panic(1)
+	x := atomic.LoadInt32(&m.currentPWM)
+	return x != 0, float64(x) / 1000, nil
 }
 
 func (m *legoMotor) IsMoving(ctx context.Context) (bool, error) {
@@ -153,5 +148,5 @@ func (m *legoMotor) Name() resource.Name {
 }
 
 func (m *legoMotor) DoCommand(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
-	panic(8)
+	return nil, fmt.Errorf("viambuildhat motor can't handle command %v", cmd)
 }

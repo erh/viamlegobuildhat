@@ -36,16 +36,38 @@ var firmware []byte
 //go:embed data/signature.bin
 var signature []byte
 
+const defaultPath = "/dev/serial0"
+
 func newConnection(ctx context.Context, deps resource.Dependencies, config resource.Config, logger logging.Logger) (resource.Resource, error) {
-	path := "/dev/serial"
+	path := defaultPath
 	if config.Attributes.Has("path") {
 		path = config.Attributes.String("path")
 	}
-	return NewConnection(ctx, config.ResourceName(), path, logger)
+	return GetConnection(ctx, config.ResourceName(), path, logger)
 }
 
+type globalConnCache struct {
+	mu    sync.Mutex
+	conns map[string]*Connection
+}
+
+var theGlobalConnCache globalConnCache
+
 // path is usually /dev/serial0
-func NewConnection(ctx context.Context, name resource.Name, path string, logger logging.Logger) (*Connection, error) {
+func GetConnection(ctx context.Context, name resource.Name, path string, logger logging.Logger) (*Connection, error) {
+	if path == "" {
+		path = defaultPath
+	}
+
+	theGlobalConnCache.mu.Lock()
+	defer theGlobalConnCache.mu.Unlock()
+	if theGlobalConnCache.conns == nil {
+		theGlobalConnCache.conns = map[string]*Connection{}
+	}
+	conn := theGlobalConnCache.conns[path]
+	if conn != nil {
+		return conn, nil
+	}
 
 	options := serial.OpenOptions{
 		PortName:          path,
@@ -61,10 +83,11 @@ func NewConnection(ctx context.Context, name resource.Name, path string, logger 
 		return nil, err
 	}
 
-	conn := &Connection{
-		name:   name,
-		logger: logger,
-		dev:    dev,
+	conn = &Connection{
+		name:       name,
+		logger:     logger,
+		dev:        dev,
+		portStatus: map[int]string{},
 	}
 	conn.closed.Store(false)
 	conn.smallSleep()
@@ -76,6 +99,8 @@ func NewConnection(ctx context.Context, name resource.Name, path string, logger 
 	if err != nil {
 		return nil, multierr.Combine(conn.Close(ctx), err)
 	}
+
+	theGlobalConnCache.conns[path] = conn
 
 	return conn, nil
 }
@@ -93,6 +118,7 @@ type Connection struct {
 	metaDataLock  sync.Mutex
 	versionString string
 	lastLines     []string
+	portStatus    map[int]string
 }
 
 func (c *Connection) init(secondTime bool) error {
@@ -143,35 +169,63 @@ func (c *Connection) readLoop() {
 	for !c.closed.Load() {
 		line, err := buf.ReadString('\r')
 		if err != nil {
+			c.logger.Errorf("got error in readLoop %v: ", err)
 			if err == io.ErrClosedPipe {
 				panic("TODO - ErrClosedPipe - should i reconnect")
 			}
 			panic(err)
 		}
 
-		line = strings.TrimSpace(line)
-		if len(line) == 0 {
-			continue
-		}
+		c.handleLogLine(line)
 
-		if strings.HasPrefix(line, "BHBL>") {
-			// prompt or echo
-			continue
-		} else if strings.Contains(line, " version") {
-			c.metaDataLock.Lock()
-			c.versionString = line
-			c.metaDataLock.Unlock()
-			c.logger.Infof("firmware version at startup: %s", line)
-		} else {
-			c.logger.Infof("got unknown line [%s]", line)
+	}
+}
+
+func (c *Connection) handleLogLine(line string) {
+	line = strings.TrimSpace(line)
+	if len(line) == 0 {
+		return
+	}
+
+	if strings.HasPrefix(line, "BHBL>") {
+		// prompt or echo
+		return
+	}
+
+	if strings.Contains(line, " version") {
+		c.metaDataLock.Lock()
+		c.versionString = line
+		c.metaDataLock.Unlock()
+		c.logger.Infof("firmware version at startup: %s", line)
+		return
+	}
+
+	if line[0] == 'P' {
+		if len(line) > 3 {
+			portid := int(line[1] - '0')
+			status := line[2:]
 
 			c.metaDataLock.Lock()
-			c.lastLines = append(c.lastLines, line)
-			if len(c.lastLines) > 20 {
-				c.lastLines = c.lastLines[len(c.lastLines)-19:]
+			defer c.metaDataLock.Unlock()
+
+			old := c.portStatus[portid]
+			c.portStatus[portid] = status
+			if old != status {
+				c.logger.Infof("port status change %s", line)
 			}
-			c.metaDataLock.Unlock()
+			return
 		}
+		c.logger.Infof("confusing port status line [%s]", line)
+		return
+	}
+
+	c.logger.Infof("got unknown line [%s]", line)
+
+	c.metaDataLock.Lock()
+	defer c.metaDataLock.Unlock()
+	c.lastLines = append(c.lastLines, line)
+	if len(c.lastLines) > 20 {
+		c.lastLines = c.lastLines[len(c.lastLines)-19:]
 	}
 }
 
