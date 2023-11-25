@@ -38,6 +38,8 @@ var signature []byte
 
 const defaultPath = "/dev/serial0"
 
+const lineCacheSize = 5
+
 func newConnection(ctx context.Context, deps resource.Dependencies, config resource.Config, logger logging.Logger) (resource.Resource, error) {
 	path := defaultPath
 	if config.Attributes.Has("path") {
@@ -224,8 +226,8 @@ func (c *Connection) handleLogLine(line string) {
 	c.metaDataLock.Lock()
 	defer c.metaDataLock.Unlock()
 	c.lastLines = append(c.lastLines, line)
-	if len(c.lastLines) > 20 {
-		c.lastLines = c.lastLines[len(c.lastLines)-19:]
+	if len(c.lastLines) > lineCacheSize {
+		c.lastLines = c.lastLines[len(c.lastLines)-lineCacheSize:]
 	}
 }
 
@@ -352,7 +354,26 @@ func (c *Connection) Name() resource.Name {
 	return c.name
 }
 
-func (c *Connection) DoCommand(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
+func (c *Connection) DoCommand(ctx context.Context, cmdMessage map[string]interface{}) (map[string]interface{}, error) {
+	cmd, has := cmdMessage["cmd"]
+	if has {
+		err := c.write([]byte(strings.TrimSpace(fmt.Sprintf("%v", cmd)) + "\r"))
+		if err != nil {
+			return nil, err
+		}
+		// TODO: capture output
+		return map[string]interface{}{}, nil
+	}
+	_, has = cmdMessage["lastLines"]
+	if has {
+		c.metaDataLock.Lock()
+		defer c.metaDataLock.Unlock()
+		s := ""
+		for _, l := range c.lastLines {
+			s += l + "\n"
+		}
+		return map[string]interface{}{"lastLines": s}, nil
+	}
 	return nil, fmt.Errorf("viambuildhat connection can't handle command %v", cmd)
 }
 
