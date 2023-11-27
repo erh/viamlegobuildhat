@@ -4,4 +4,4 @@ import (
 	"go.viam.com/rdk/resource"
 )
 
-var family = resource.ModelNamespace("erh").WithFamily("viambuildhat")
+var family = resource.ModelNamespace("erh").WithFamily("viamlegobuildhat")
