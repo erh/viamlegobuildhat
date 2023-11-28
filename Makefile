@@ -1,6 +1,6 @@
 
-bin/viambuildhat: go.mod *.go cmd/module/*.go
-	go build -o bin/viambuildhat cmd/module/cmd.go
+bin/viamlegobuildhat: go.mod *.go cmd/module/*.go
+	go build -o bin/viamlegobuildhat cmd/module/cmd.go
 
 lint:
 	gofmt -s -w .
@@ -12,8 +12,8 @@ updaterdk:
 test:
 	go test
 
-module: bin/viambuildhat
-	tar czf module.tar.gz bin/viambuildhat
+module: bin/viamlegobuildhat
+	tar czf module.tar.gz bin/viamlegobuildhat
 
 all: test module 
 
