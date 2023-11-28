@@ -1,4 +1,15 @@
 
+Instructions
+=====
+* Add module to the machine
+* Look for viambuildhat:motor
+* Add it and config with
+```
+{ 
+   "port" : "A"
+}
+```
+
 
 Links
 =====
