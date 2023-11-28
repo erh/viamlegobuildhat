@@ -1,0 +1,17 @@
+{
+  "module_id": "erh:viamlegobuildhat",
+  "visibility": "public",
+  "url": "https://github.com/erh/viamlegobuildhat",
+  "description": "module for lego buildhat",
+  "models": [
+    {
+      "api": "rdk:component:generic",
+      "model": "erh:viamlegobuildhat:connection"
+    },
+    {
+      "api": "rdk:component:motor",
+      "model": "erh:viamlegobuildhat:motor"
+    }
+  ],
+  "entrypoint": "bin/viamlegobuildhat"
+}
